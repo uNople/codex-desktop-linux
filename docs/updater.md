@@ -15,6 +15,12 @@ It:
   command when no auth agent is available
 - performs best-effort Codex CLI preflight from the launcher
 
+Ready packages continue to receive lightweight upstream metadata checks. If the
+DMG fingerprint is unchanged, the updater keeps the existing package ready. If
+upstream changes before that package is installed, the updater supersedes it
+and builds the newer DMG instead. A metadata request failure leaves the ready
+package and its install state intact.
+
 Codex CLI preflight preserves the detected CLI install type. npm-managed
 installs continue to update through npm, while official standalone installs
 under `~/.codex/packages/standalone` are updated with the official standalone

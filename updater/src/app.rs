@@ -463,7 +463,7 @@ async fn acquire_check_lock(
 fn update_install_is_pending(status: &UpdateStatus) -> bool {
     matches!(
         status,
-        UpdateStatus::ReadyToInstall | UpdateStatus::WaitingForAppExit | UpdateStatus::Installing
+        UpdateStatus::ReadyToInstall | UpdateStatus::WaitingForAppExit
     )
 }
 
@@ -1095,8 +1095,8 @@ async fn run_check_cycle_with_options(
         warn!(?error, "wrapper update detection failed during check cycle");
     }
 
-    if update_install_is_pending(&state.status) {
-        info!("skipping upstream check because an update is already pending");
+    if state.status == UpdateStatus::Installing {
+        info!("skipping upstream check because an update is being installed");
         maybe_prune_caches(config, state);
         if reconcile_after_check {
             reconcile_pending_install(config, state, paths).await?;
@@ -1111,7 +1111,32 @@ async fn run_check_cycle_with_options(
         );
     }
 
-    if if_stale
+    let client = upstream::http_client()?;
+    let prefetched_metadata = if update_install_is_pending(&state.status) {
+        let metadata = upstream::fetch_remote_metadata(&client, &config.dmg_url).await?;
+        state.last_check_at = Some(Utc::now());
+        state.last_successful_check_at = Some(Utc::now());
+
+        if state.remote_headers_fingerprint.as_deref()
+            == Some(metadata.headers_fingerprint.as_str())
+        {
+            persist_state(paths, state)?;
+            info!("pending update still matches upstream; keeping ready package");
+            maybe_prune_caches(config, state);
+            if reconcile_after_check {
+                reconcile_pending_install(config, state, paths).await?;
+            }
+            return Ok(());
+        }
+
+        info!("upstream changed while an update was pending; superseding ready package");
+        Some(metadata)
+    } else {
+        None
+    };
+
+    if prefetched_metadata.is_none()
+        && if_stale
         && !update_check_should_retry(&state.status)
         && upstream_check_is_fresh(config, state)
     {
@@ -1123,12 +1148,13 @@ async fn run_check_cycle_with_options(
         return Ok(());
     }
 
-    let client = upstream::http_client()?;
-
     let retrying_update = prepare_upstream_check(state, paths)?;
 
     let result: Result<()> = async {
-        let metadata = upstream::fetch_remote_metadata(&client, &config.dmg_url).await?;
+        let metadata = match prefetched_metadata {
+            Some(metadata) => metadata,
+            None => upstream::fetch_remote_metadata(&client, &config.dmg_url).await?,
+        };
         let previous_headers_fingerprint = state.remote_headers_fingerprint.clone();
         state.remote_headers_fingerprint = Some(metadata.headers_fingerprint.clone());
         state.last_successful_check_at = Some(Utc::now());
@@ -2424,13 +2450,27 @@ mod tests {
 
     #[tokio::test]
     async fn pending_dmg_update_still_clears_stale_wrapper_candidate() -> Result<()> {
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/Codex.dmg"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("ETag", "\"pending\"")
+                    .insert_header("Content-Length", "42"),
+            )
+            .mount(&server)
+            .await;
+
         let temp = tempfile::tempdir()?;
         let paths = test_paths(temp.path());
         paths.ensure_dirs()?;
-        let config = test_config(temp.path());
+        let mut config = test_config(temp.path());
+        config.dmg_url = format!("{}/Codex.dmg", server.uri());
 
         let mut state = PersistedState::new(true);
         state.status = UpdateStatus::ReadyToInstall;
+        state.remote_headers_fingerprint =
+            Some("etag=\"pending\"|last_modified=|content_length=42".to_string());
         state.candidate_wrapper_commit = Some("stale".to_string());
         state.candidate_wrapper_version = Some("0.9.0".to_string());
         state.wrapper_changelog = Some("old changelog".to_string());
@@ -2560,7 +2600,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_check_cycle_skips_when_update_is_already_pending() -> Result<()> {
+    async fn run_check_cycle_skips_while_update_is_installing() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let paths = RuntimePaths {
             config_file: temp.path().join("config/config.toml"),
@@ -2587,34 +2627,125 @@ mod tests {
             generated_artifact_cleanup: Default::default(),
         };
 
+        let mut state = PersistedState::new(true);
+        state.status = UpdateStatus::Installing;
+
+        run_check_cycle(&config, &mut state, &paths).await?;
+
+        assert_eq!(state.status, UpdateStatus::Installing);
+        assert_eq!(state.last_check_at, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn run_check_cycle_keeps_pending_update_when_upstream_is_unchanged() -> Result<()> {
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/Codex.dmg"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("ETag", "\"pending\"")
+                    .insert_header("Content-Length", "42"),
+            )
+            .mount(&server)
+            .await;
+
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let mut config = test_config(temp.path());
+        config.dmg_url = format!("{}/Codex.dmg", server.uri());
+        let fingerprint = "etag=\"pending\"|last_modified=|content_length=42";
+
         for status in [
             UpdateStatus::ReadyToInstall,
             UpdateStatus::WaitingForAppExit,
-            UpdateStatus::Installing,
         ] {
             let mut state = PersistedState::new(true);
             state.status = status.clone();
+            state.remote_headers_fingerprint = Some(fingerprint.to_string());
 
             run_check_cycle(&config, &mut state, &paths).await?;
 
             assert_eq!(state.status, status);
-            assert_eq!(state.last_check_at, None);
+            assert!(state.last_check_at.is_some());
+            assert!(state.last_successful_check_at.is_some());
         }
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn daemon_check_cycle_reloads_pending_state_written_by_another_process() -> Result<()> {
+    async fn run_check_cycle_supersedes_pending_update_when_upstream_changes() -> Result<()> {
+        let server = MockServer::start().await;
+        let body = b"codex-dmg-test-payload";
+        let sha256 = "678cd508ffe0071e217020a7a4eecbebe25362c022ac78c13a5ae87b7a3a0c92";
+
+        Mock::given(method("HEAD"))
+            .and(path("/Codex.dmg"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("ETag", "\"newer\"")
+                    .insert_header("Content-Length", body.len().to_string()),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/Codex.dmg"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(body.to_vec()))
+            .mount(&server)
+            .await;
+
         let temp = tempfile::tempdir()?;
         let paths = test_paths(temp.path());
         paths.ensure_dirs()?;
         let mut config = test_config(temp.path());
-        config.dmg_url = "https://invalid.example/Codex.dmg".to_string();
+        config.dmg_url = format!("{}/Codex.dmg", server.uri());
+        write_installed_build_info(&config, sha256)?;
+
+        let mut state = PersistedState::new(true);
+        state.status = UpdateStatus::WaitingForAppExit;
+        state.remote_headers_fingerprint =
+            Some("etag=\"older\"|last_modified=|content_length=41".to_string());
+        state.candidate_version = Some("2999.03.25.010203+deadbeef".to_string());
+        state.dmg_sha256 = Some("old-dmg-sha256".to_string());
+
+        run_check_cycle(&config, &mut state, &paths).await?;
+
+        assert_eq!(state.status, UpdateStatus::Idle);
+        assert_eq!(state.candidate_version, None);
+        assert_eq!(state.dmg_sha256.as_deref(), Some(sha256));
+        assert_eq!(
+            state.remote_headers_fingerprint.as_deref(),
+            Some("etag=\"newer\"|last_modified=|content_length=22")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn daemon_check_cycle_reloads_pending_state_written_by_another_process() -> Result<()> {
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/Codex.dmg"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("ETag", "\"pending\"")
+                    .insert_header("Content-Length", "42"),
+            )
+            .mount(&server)
+            .await;
+
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let mut config = test_config(temp.path());
+        config.dmg_url = format!("{}/Codex.dmg", server.uri());
 
         let mut on_disk = PersistedState::new(true);
         on_disk.status = UpdateStatus::WaitingForAppExit;
         on_disk.candidate_version = Some("2999.03.25.010203+deadbeef".to_string());
+        on_disk.remote_headers_fingerprint =
+            Some("etag=\"pending\"|last_modified=|content_length=42".to_string());
         on_disk.waiting_for_app_exit_auto_install = true;
         on_disk.save(&paths.state_file)?;
 
@@ -2625,7 +2756,7 @@ mod tests {
 
         assert_eq!(stale_daemon_state.status, UpdateStatus::WaitingForAppExit);
         assert!(stale_daemon_state.waiting_for_app_exit_auto_install);
-        assert_eq!(stale_daemon_state.last_check_at, None);
+        assert!(stale_daemon_state.last_check_at.is_some());
         Ok(())
     }
 
