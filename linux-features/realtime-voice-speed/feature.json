@@ -1,0 +1,9 @@
+{
+  "id": "realtime-voice-speed",
+  "name": "Realtime voice speed",
+  "description": "Adds a native Realtime speech-speed control to Linux desktop settings.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}
