@@ -10,6 +10,10 @@ codex-app.backup-*/
 .codex-app.promotion.lock
 codex-*-app/
 codex-app-next/
+codex-app-next.backup-*/
+.codex-app-next.candidate-*/
+.codex-app-next.promotion.json
+.codex-app-next.promotion.lock
 bin/codex-*
 target/
 dist/
