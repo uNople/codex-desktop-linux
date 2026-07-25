@@ -345,7 +345,8 @@ Environment:
                               Auto-detect WSLg, keep generic Linux defaults, force the WSLg profile,
                               or force native Wayland with GPU compositing enabled
   CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0|1
-                              Override Wayland side-panel compositing workaround; 1 forces and 0 disables
+                              Override the Wayland side-panel compositing workaround; 1 forces and 0 disables
+                              (Plasma/Wayland keeps GPU compositing enabled by default)
   CODEX_ELECTRON_DISABLE_DEV_SHM_USAGE=auto|0|1
                               Override --disable-dev-shm-usage; auto keeps it only when /dev/shm is missing or small
   CODEX_LAUNCHER_LOCK_WAIT_SECONDS=N
@@ -3118,6 +3119,13 @@ gnome_desktop_detected() {
     esac
 }
 
+plasma_desktop_detected() {
+    case "${XDG_CURRENT_DESKTOP:-}:${XDG_SESSION_DESKTOP:-}:${DESKTOP_SESSION:-}" in
+        *KDE*|*kde*|*Plasma*|*plasma*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 connected_drm_monitor_count() {
     local drm_root="${CODEX_DRM_CLASS_ROOT:-/sys/class/drm}"
     local status_file status count=0
@@ -3463,6 +3471,11 @@ should_disable_gpu_compositing() {
             return 1
         fi
         echo "Invalid CODEX_ELECTRON_DISABLE_GPU_COMPOSITING='${CODEX_ELECTRON_DISABLE_GPU_COMPOSITING:-}'; using rendering profile default" >&2
+    fi
+
+    if [ "${XDG_SESSION_TYPE:-}" = "wayland" ] && plasma_desktop_detected; then
+        echo "Detected Plasma Wayland session; keeping GPU compositing enabled. Set CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1 if the side panel flickers or appears transparent."
+        return 1
     fi
 
     if [ "${XDG_SESSION_TYPE:-}" = "wayland" ] &&

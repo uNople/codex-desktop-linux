@@ -48,11 +48,19 @@ promise `--no-sandbox` behavior. Out of scope for performance work.
 
 ### Wayland `--disable-gpu-compositing` workaround
 
-On Wayland sessions the launcher intentionally trades compositing performance
-for side-panel rendering stability. That is a documented workaround with an
-explicit opt-out (`CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0`); do not remove
-it for performance reasons without re-testing the side-panel flicker it
-papers over.
+Generic Wayland sessions intentionally trade compositing performance for
+side-panel rendering stability. Plasma/Wayland is the exception: it keeps GPU
+compositing enabled by default, while
+`CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1` retains the workaround for users who
+still see side-panel flicker or transparency.
+
+The Plasma exception follows live profiling on KDE Wayland with the current
+upstream app (`26.715.31925`, Electron `42.3.0`) across three 144 Hz HDR
+displays. Repeated sidebar/content scrolling drove the renderer to 132% CPU
+and the Electron browser process to 131% with `--disable-gpu-compositing`,
+versus mostly 5-11% and 1-17% respectively while idle. Keep the workaround
+available, but do not make Plasma pay that cost without a reported rendering
+problem.
 
 ### Webview server model
 

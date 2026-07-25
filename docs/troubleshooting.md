@@ -48,6 +48,10 @@ For KDE/Wayland rendering issues, try:
 --ozone-platform=x11
 ```
 
+Plasma/Wayland keeps GPU compositing enabled by default. If the left side panel
+flickers or appears transparent, opt back into the compatibility workaround
+with `CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1` or the persistent flag below.
+
 For resize ghosting, stale frame trails, or compositor artifacts after dragging
 window borders, try:
 
