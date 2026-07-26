@@ -50,8 +50,9 @@ function realtimeRuntimeSource() {
     `globalThis.${RUNTIME_MARKER}="1";`,
     `globalThis.codexLinuxRealtimeVoiceSpeedSessions??=new Set;`,
     `globalThis.codexLinuxRealtimeVoiceSpeedClamp=e=>{let t=Number(e);return Number.isFinite(t)?Math.min(${MAX_SPEED},Math.max(${MIN_SPEED},Math.round(t*${STEPS_PER_UNIT})/${STEPS_PER_UNIT})):${DEFAULT_SPEED}};`,
+    `globalThis.codexLinuxRealtimeVoiceSpeedSessionUpdate=e=>({audio:{output:{speed:globalThis.codexLinuxRealtimeVoiceSpeedClamp(e)}}});`,
     `globalThis.codexLinuxRealtimeVoiceSpeed=()=>{try{let e=localStorage.getItem(${JSON.stringify(SETTINGS_KEY)});return globalThis.codexLinuxRealtimeVoiceSpeedClamp(e==null?${DEFAULT_SPEED}:e)}catch{return ${DEFAULT_SPEED}}};`,
-    `globalThis.codexLinuxSetRealtimeVoiceSpeed=e=>{let t=globalThis.codexLinuxRealtimeVoiceSpeedClamp(e);try{localStorage.setItem(${JSON.stringify(SETTINGS_KEY)},String(t))}catch{}for(let e of globalThis.codexLinuxRealtimeVoiceSpeedSessions)e.sendRealtimeSessionUpdate({speed:t});return t};`,
+    `globalThis.codexLinuxSetRealtimeVoiceSpeed=e=>{let t=globalThis.codexLinuxRealtimeVoiceSpeedClamp(e);try{localStorage.setItem(${JSON.stringify(SETTINGS_KEY)},String(t))}catch{}for(let e of globalThis.codexLinuxRealtimeVoiceSpeedSessions)e.sendRealtimeSessionUpdate(globalThis.codexLinuxRealtimeVoiceSpeedSessionUpdate(t));return t};`,
   ].join("");
 }
 
@@ -96,7 +97,7 @@ function applyRealtimeVoiceSpeedPatch(source) {
     )
     .replace(
       REALTIME_SESSION_HANDLER_NEEDLE,
-      `!r.success||this.#c||(this.#c=!0,this.#s?.sendRealtimeSessionUpdate({speed:globalThis.codexLinuxRealtimeVoiceSpeed()}),Hf.info(\`realtime_session_updated\``,
+      `!r.success||this.#c||(this.#c=!0,this.#s?.sendRealtimeSessionUpdate(globalThis.codexLinuxRealtimeVoiceSpeedSessionUpdate(globalThis.codexLinuxRealtimeVoiceSpeed())),Hf.info(\`realtime_session_updated\``,
     );
 }
 

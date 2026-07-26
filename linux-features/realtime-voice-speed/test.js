@@ -117,12 +117,19 @@ test("runtime helper defaults, persists, and updates active sessions", () => {
   vm.runInNewContext(realtimeRuntimeSource(), context);
 
   assert.equal(context.codexLinuxRealtimeVoiceSpeed(), 1.5);
+  assert.equal(
+    JSON.stringify(context.codexLinuxRealtimeVoiceSpeedSessionUpdate(1.2)),
+    JSON.stringify({ audio: { output: { speed: 1.2 } } }),
+  );
   context.codexLinuxRealtimeVoiceSpeedSessions.add({
     sendRealtimeSessionUpdate: (update) => updates.push(update),
   });
   assert.equal(context.codexLinuxSetRealtimeVoiceSpeed(1.2), 1.2);
   assert.equal(values.get(SETTINGS_KEY), "1.2");
-  assert.equal(JSON.stringify(updates), JSON.stringify([{ speed: 1.2 }]));
+  assert.equal(
+    JSON.stringify(updates),
+    JSON.stringify([{ audio: { output: { speed: 1.2 } } }]),
+  );
 });
 
 test("Realtime patch sends speed over the existing data channel", () => {
@@ -133,8 +140,9 @@ test("Realtime patch sends speed over the existing data channel", () => {
   assert.match(patched, /type:`session\.update`,session:e/);
   assert.match(
     patched,
-    /sendRealtimeSessionUpdate\(\{speed:globalThis\.codexLinuxRealtimeVoiceSpeed\(\)\}\)/,
+    /sendRealtimeSessionUpdate\(globalThis\.codexLinuxRealtimeVoiceSpeedSessionUpdate\(globalThis\.codexLinuxRealtimeVoiceSpeed\(\)\)\)/,
   );
+  assert.doesNotMatch(patched, /sendRealtimeSessionUpdate\(\{speed:/);
   assert.match(patched, /codexLinuxRealtimeVoiceSpeedSessions\.delete\(this\)/);
   assert.equal(applyRealtimeVoiceSpeedPatch(patched), patched);
   assert.equal(matchesRealtimeVoiceContract(patched), true);

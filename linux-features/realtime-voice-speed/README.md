@@ -16,7 +16,11 @@ session starts, it sends:
 {
   "type": "session.update",
   "session": {
-    "speed": 1.5
+    "audio": {
+      "output": {
+        "speed": 1.5
+      }
+    }
   }
 }
 ```
