@@ -9,114 +9,94 @@ const LOCAL_FILE_WATCH_METHOD =
 
 function patchWorkerSource(source) {
   const markerCount = source.split(PATCH_MARKER).length - 1;
-  if (markerCount === 1) {
-    return { source, matched: 1, changed: 0, reason: null };
-  }
-  if (markerCount !== 0) {
-    return {
-      source,
-      matched: 0,
-      changed: 0,
-      reason: `Found ${markerCount} shallow repository-watch markers`,
-    };
-  }
-
   LOCAL_FILE_WATCH_METHOD.lastIndex = 0;
   const matches = [...source.matchAll(LOCAL_FILE_WATCH_METHOD)];
-  if (matches.length !== 1) {
+  if (matches.length === 0) {
+    if (markerCount > 0) {
+      return { source, matched: markerCount, changed: 0, reason: null };
+    }
     return {
       source,
       matched: 0,
       changed: 0,
-      reason: `Found ${matches.length} local startFileWatch implementations`,
+      reason: "Local startFileWatch implementation not found",
     };
   }
 
-  const match = matches[0];
-  const optionsName = match.groups.options;
-  const branch =
-    `if(process.platform===\`linux\`&&${optionsName}.recursive){` +
-    `/*${PATCH_MARKER}*/` +
-    `${optionsName}={...${optionsName},recursive:!1}}`;
-  const methodStart = match.index + match[0].length;
+  let patchedSource = source;
+  let offset = 0;
+  for (const match of matches) {
+    const optionsName = match.groups.options;
+    const branch =
+      `if(process.platform===\`linux\`&&${optionsName}.recursive){` +
+      `/*${PATCH_MARKER}*/` +
+      `${optionsName}={...${optionsName},recursive:!1}}`;
+    const methodStart = match.index + match[0].length + offset;
+    patchedSource =
+      patchedSource.slice(0, methodStart) + branch + patchedSource.slice(methodStart);
+    offset += branch.length;
+  }
   return {
-    source: source.slice(0, methodStart) + branch + source.slice(methodStart),
-    matched: 1,
-    changed: 1,
+    source: patchedSource,
+    matched: markerCount + matches.length,
+    changed: matches.length,
     reason: null,
   };
 }
 
-function findLocalFileWatchBundle(extractedDir) {
+function findLocalFileWatchBundles(extractedDir) {
   const buildDir = path.join(extractedDir, ".vite", "build");
   if (!fs.existsSync(buildDir)) {
-    return { target: null, result: null, reason: ".vite/build directory not found" };
+    return { candidates: [], result: null, reason: ".vite/build directory not found" };
   }
 
   const bundlePaths = fs.readdirSync(buildDir, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
     .map((entry) => path.join(buildDir, entry.name))
     .sort();
-  const patched = [];
-  const raw = [];
+  const candidates = [];
 
   for (const bundlePath of bundlePaths) {
     const source = fs.readFileSync(bundlePath, "utf8");
-    const markerCount = source.split(PATCH_MARKER).length - 1;
-    if (markerCount > 0) {
-      patched.push({ bundlePath, result: patchWorkerSource(source) });
-      continue;
-    }
-    LOCAL_FILE_WATCH_METHOD.lastIndex = 0;
-    const matches = [...source.matchAll(LOCAL_FILE_WATCH_METHOD)].length;
-    if (matches > 0) raw.push({ bundlePath, matches, source });
+    const result = patchWorkerSource(source);
+    if (result.matched > 0) candidates.push({ bundlePath, result });
   }
 
-  if (patched.length > 0) {
-    if (patched.length !== 1 || raw.length !== 0) {
-      return {
-        target: null,
-        result: null,
-        reason:
-          `Found shallow-watch markers in ${patched.length} bundles and ` +
-          `${raw.length} unpatched bundles`,
-      };
-    }
+  if (candidates.length === 0) {
     return {
-      target: patched[0].bundlePath,
-      result: patched[0].result,
-      reason: patched[0].result.reason,
-    };
-  }
-
-  const rawMatchCount = raw.reduce((total, candidate) => total + candidate.matches, 0);
-  if (raw.length !== 1 || rawMatchCount !== 1) {
-    return {
-      target: null,
+      candidates,
       result: null,
       reason:
-        `Found ${rawMatchCount} local startFileWatch implementations across ` +
+        `Found 0 local startFileWatch implementations across ` +
         `${bundlePaths.length} build bundles`,
     };
   }
-  const result = patchWorkerSource(raw[0].source);
-  return { target: raw[0].bundlePath, result, reason: result.reason };
+
+  const result = {
+    matched: candidates.reduce((total, candidate) => total + candidate.result.matched, 0),
+    changed: candidates.reduce((total, candidate) => total + candidate.result.changed, 0),
+    reason: null,
+  };
+  return { candidates, result, reason: null };
 }
 
 function patchWorker(extractedDir) {
-  const discovery = findLocalFileWatchBundle(extractedDir);
-  if (discovery.target == null || discovery.result?.matched !== 1) {
+  const discovery = findLocalFileWatchBundles(extractedDir);
+  if (!(discovery.result?.matched > 0)) {
     const reason = discovery.reason ?? "Local startFileWatch implementation not found";
     console.warn(`WARN: ${reason} - skipping shallow repository-watch feature`);
     return { matched: discovery.result?.matched ?? 0, changed: 0, reason };
   }
-  const result = discovery.result;
-  if (result.changed === 1) fs.writeFileSync(discovery.target, result.source, "utf8");
+  for (const candidate of discovery.candidates) {
+    if (candidate.result.changed > 0) {
+      fs.writeFileSync(candidate.bundlePath, candidate.result.source, "utf8");
+    }
+  }
   return {
-    matched: result.matched,
-    changed: result.changed,
-    reason: result.reason,
-    target: path.relative(extractedDir, discovery.target),
+    matched: discovery.result.matched,
+    changed: discovery.result.changed,
+    reason: null,
+    targets: discovery.candidates.map(({ bundlePath }) => path.relative(extractedDir, bundlePath)),
   };
 }
 
@@ -128,10 +108,10 @@ const descriptors = [
     ciPolicy: "optional",
     apply: patchWorker,
     status: (result, warnings) => {
-      if (result?.matched !== 1) {
+      if (!(result?.matched > 0)) {
         return { status: "skipped-optional", reason: result?.reason ?? warnings[0] ?? null };
       }
-      return result.changed === 1 ? "applied" : "already-applied";
+      return result.changed > 0 ? "applied" : "already-applied";
     },
   },
 ];
@@ -140,7 +120,7 @@ module.exports = {
   LOCAL_FILE_WATCH_METHOD,
   PATCH_MARKER,
   descriptors,
-  findLocalFileWatchBundle,
+  findLocalFileWatchBundles,
   patchWorker,
   patchWorkerSource,
 };

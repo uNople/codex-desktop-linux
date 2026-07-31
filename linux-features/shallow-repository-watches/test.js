@@ -13,18 +13,18 @@ const {
 const {
   PATCH_MARKER,
   descriptors,
-  findLocalFileWatchBundle,
+  findLocalFileWatchBundles,
   patchWorker,
   patchWorkerSource,
 } = require("./patch.js");
 
-function localWorkerSource() {
+function localWorkerSource(className = "LocalHost", optionsName = "e") {
   return [
-    "var LocalHost=class{",
+    `var ${className}=class{`,
     "async platformPath(){return E.default.posix}",
-    "async startFileWatch(e){let t=jH(),n=!1,r=await this.platformPath(),",
-    "i=(0,w.watch)(this.getFileSystemPath(e.path),{recursive:e.recursive},()=>{});",
-    "return{coverage:{recursive:e.recursive},path:e.path,closed:t.promise}}",
+    `async startFileWatch(${optionsName}){let t=jH(),n=!1,r=await this.platformPath(),`,
+    `i=(0,w.watch)(this.getFileSystemPath(${optionsName}.path),{recursive:${optionsName}.recursive},()=>{});`,
+    `return{coverage:{recursive:${optionsName}.recursive},path:${optionsName}.path,closed:t.promise}}`,
     "};",
   ].join("");
 }
@@ -131,6 +131,19 @@ test("patch preserves non-recursive Linux watches and recursive watches on other
   assert.deepEqual(darwinSession.coverage, { recursive: true });
 });
 
+test("patch handles duplicated and partially patched current worker implementations", () => {
+  const firstWorker = patchWorkerSource(localWorkerSource()).source;
+  const source = `${firstWorker}${localWorkerSource("SecondHost", "r")}`;
+  const result = patchWorkerSource(source);
+  assert.equal(result.matched, 2);
+  assert.equal(result.changed, 1);
+  assert.equal(result.source.split(PATCH_MARKER).length - 1, 2);
+  assert.deepEqual(
+    patchWorkerSource(result.source),
+    { source: result.source, matched: 2, changed: 0, reason: null },
+  );
+});
+
 test("feature discovers and patches the current hashed build bundle shape", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-shallow-watch-bundle-"));
   try {
@@ -138,30 +151,42 @@ test("feature discovers and patches the current hashed build bundle shape", () =
     fs.mkdirSync(buildDir, { recursive: true });
     fs.writeFileSync(path.join(buildDir, "unrelated.js"), "var worker={startFileWatch(){}};");
     fs.writeFileSync(path.join(buildDir, "src-current.js"), localWorkerSource());
+    fs.writeFileSync(
+      path.join(buildDir, "worker-current.js"),
+      localWorkerSource("SecondHost", "r"),
+    );
 
-    const discovery = findLocalFileWatchBundle(root);
-    assert.equal(path.basename(discovery.target), "src-current.js");
+    const discovery = findLocalFileWatchBundles(root);
+    assert.deepEqual(
+      discovery.candidates.map(({ bundlePath }) => path.basename(bundlePath)),
+      ["src-current.js", "worker-current.js"],
+    );
     const first = patchWorker(root);
     assert.deepEqual(first, {
-      matched: 1,
-      changed: 1,
+      matched: 2,
+      changed: 2,
       reason: null,
-      target: path.join(".vite", "build", "src-current.js"),
+      targets: [
+        path.join(".vite", "build", "src-current.js"),
+        path.join(".vite", "build", "worker-current.js"),
+      ],
     });
     const second = patchWorker(root);
     assert.equal(second.changed, 0);
-    assert.equal(fs.readFileSync(discovery.target, "utf8").split(PATCH_MARKER).length - 1, 1);
+    for (const { bundlePath } of discovery.candidates) {
+      assert.equal(fs.readFileSync(bundlePath, "utf8").split(PATCH_MARKER).length - 1, 1);
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("ambiguous or drifted local hosts remain byte-identical", () => {
-  const source = `${localWorkerSource()}${localWorkerSource()}`;
+test("drifted local hosts remain byte-identical", () => {
+  const source = "var LocalHost=class{async startFileWatch(e){return e}};";
   const result = patchWorkerSource(source);
   assert.equal(result.source, source);
   assert.equal(result.matched, 0);
   assert.equal(result.changed, 0);
-  assert.match(result.reason, /Found 2 local startFileWatch implementations/);
+  assert.match(result.reason, /Local startFileWatch implementation not found/);
   assert.equal(descriptors[0].status(result, []).status, "skipped-optional");
 });
