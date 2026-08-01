@@ -12,20 +12,29 @@ const {
 } = require("../../scripts/lib/linux-features.js");
 const {
   PATCH_MARKER,
+  PARCEL_WATCH_MARKER,
   descriptors,
   findLocalFileWatchBundles,
   patchWorker,
   patchWorkerSource,
 } = require("./patch.js");
 
-function localWorkerSource(className = "LocalHost", optionsName = "e") {
+function localWorkerSource() {
   return [
-    `var ${className}=class{`,
+    "var LocalHost=class{",
     "async platformPath(){return E.default.posix}",
-    `async startFileWatch(${optionsName}){let t=jH(),n=!1,r=await this.platformPath(),`,
-    `i=(0,w.watch)(this.getFileSystemPath(${optionsName}.path),{recursive:${optionsName}.recursive},()=>{});`,
-    `return{coverage:{recursive:${optionsName}.recursive},path:${optionsName}.path,closed:t.promise}}`,
+    "async startFileWatch(e){let t=jH(),n=!1,r=await this.platformPath(),",
+    "i=(0,w.watch)(this.getFileSystemPath(e.path),{recursive:e.recursive},()=>{});",
+    "return{coverage:{recursive:e.recursive},path:e.path,closed:t.promise}}",
     "};",
+  ].join("");
+}
+
+function parcelWorkingTreeSource() {
+  return [
+    "function create(t,n){return t.isLocal?process.platform===`linux`?",
+    "Jve(n,{ignoredPaths:[E.posix.join(n.path,`.git`)]}):",
+    "e.startFileWatch(n):t.startFileWatch(n)}",
   ].join("");
 }
 
@@ -131,20 +140,23 @@ test("patch preserves non-recursive Linux watches and recursive watches on other
   assert.deepEqual(darwinSession.coverage, { recursive: true });
 });
 
-test("patch handles duplicated and partially patched current worker implementations", () => {
-  const firstWorker = patchWorkerSource(localWorkerSource()).source;
-  const source = `${firstWorker}${localWorkerSource("SecondHost", "r")}`;
-  const result = patchWorkerSource(source);
-  assert.equal(result.matched, 2);
-  assert.equal(result.changed, 1);
-  assert.equal(result.source.split(PATCH_MARKER).length - 1, 2);
+test("routes the current Linux Parcel working-tree branch through the shallow host", () => {
+  const first = patchWorkerSource(`${localWorkerSource()}${parcelWorkingTreeSource()}`);
+  assert.equal(first.matched, 1);
+  assert.equal(first.changed, 1);
+  assert.equal(first.source.split(PARCEL_WATCH_MARKER).length - 1, 1);
+  assert.doesNotMatch(first.source, /process\.platform===`linux`\?Jve/);
+  assert.match(
+    first.source,
+    /codexLinuxShallowParcelWorkingTreeWatch\*\/e\.startFileWatch\(n\)/,
+  );
   assert.deepEqual(
-    patchWorkerSource(result.source),
-    { source: result.source, matched: 2, changed: 0, reason: null },
+    patchWorkerSource(first.source),
+    { source: first.source, matched: 1, changed: 0, reason: null },
   );
 });
 
-test("feature discovers and patches the current hashed build bundle shape", () => {
+test("feature atomically patches both current build bundles", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-shallow-watch-bundle-"));
   try {
     const buildDir = path.join(root, ".vite", "build");
@@ -152,14 +164,14 @@ test("feature discovers and patches the current hashed build bundle shape", () =
     fs.writeFileSync(path.join(buildDir, "unrelated.js"), "var worker={startFileWatch(){}};");
     fs.writeFileSync(path.join(buildDir, "src-current.js"), localWorkerSource());
     fs.writeFileSync(
-      path.join(buildDir, "worker-current.js"),
-      localWorkerSource("SecondHost", "r"),
+      path.join(buildDir, "worker.js"),
+      `${localWorkerSource()}${parcelWorkingTreeSource()}`,
     );
 
     const discovery = findLocalFileWatchBundles(root);
     assert.deepEqual(
       discovery.candidates.map(({ bundlePath }) => path.basename(bundlePath)),
-      ["src-current.js", "worker-current.js"],
+      ["src-current.js", "worker.js"],
     );
     const first = patchWorker(root);
     assert.deepEqual(first, {
@@ -168,10 +180,11 @@ test("feature discovers and patches the current hashed build bundle shape", () =
       reason: null,
       targets: [
         path.join(".vite", "build", "src-current.js"),
-        path.join(".vite", "build", "worker-current.js"),
+        path.join(".vite", "build", "worker.js"),
       ],
     });
     const second = patchWorker(root);
+    assert.equal(second.matched, 2);
     assert.equal(second.changed, 0);
     for (const { bundlePath } of discovery.candidates) {
       assert.equal(fs.readFileSync(bundlePath, "utf8").split(PATCH_MARKER).length - 1, 1);
@@ -181,12 +194,55 @@ test("feature discovers and patches the current hashed build bundle shape", () =
   }
 });
 
-test("drifted local hosts remain byte-identical", () => {
-  const source = "var LocalHost=class{async startFileWatch(e){return e}};";
+test("current bundle drift leaves every candidate byte-identical", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-shallow-watch-drift-"));
+  try {
+    const buildDir = path.join(root, ".vite", "build");
+    fs.mkdirSync(buildDir, { recursive: true });
+    const source = localWorkerSource();
+    fs.writeFileSync(path.join(buildDir, "worker.js"), source);
+
+    const result = patchWorker(root);
+    assert.equal(result.matched, 0);
+    assert.equal(result.changed, 0);
+    assert.match(result.reason, /1 local startFileWatch implementation/);
+    assert.equal(fs.readFileSync(path.join(buildDir, "worker.js"), "utf8"), source);
+    assert.equal(descriptors[0].status(result, []).status, "skipped-optional");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an extra Parcel working-tree branch leaves current bundles byte-identical", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-shallow-watch-parcel-drift-"));
+  try {
+    const buildDir = path.join(root, ".vite", "build");
+    fs.mkdirSync(buildDir, { recursive: true });
+    const sources = new Map([
+      ["src-current.js", localWorkerSource()],
+      ["worker.js", `${localWorkerSource()}${parcelWorkingTreeSource()}`],
+      ["worker-extra.js", parcelWorkingTreeSource()],
+    ]);
+    for (const [name, source] of sources) fs.writeFileSync(path.join(buildDir, name), source);
+
+    const result = patchWorker(root);
+    assert.equal(result.matched, 0);
+    assert.equal(result.changed, 0);
+    assert.match(result.reason, /2 Parcel working-tree branches across 3 candidate bundles/);
+    for (const [name, source] of sources) {
+      assert.equal(fs.readFileSync(path.join(buildDir, name), "utf8"), source);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("ambiguous or drifted local hosts remain byte-identical", () => {
+  const source = `${localWorkerSource()}${localWorkerSource()}`;
   const result = patchWorkerSource(source);
   assert.equal(result.source, source);
   assert.equal(result.matched, 0);
   assert.equal(result.changed, 0);
-  assert.match(result.reason, /Local startFileWatch implementation not found/);
+  assert.match(result.reason, /Found 2 local startFileWatch implementations/);
   assert.equal(descriptors[0].status(result, []).status, "skipped-optional");
 });
