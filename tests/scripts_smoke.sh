@@ -542,6 +542,40 @@ JSON
     assert_mode "$external_file" "600"
 }
 
+test_package_plugin_permission_repair() {
+    info "Checking installed plugin ancestor permission repair"
+    local app_root="$TMP_DIR/package-plugin-permissions/opt/codex-desktop"
+    local plugins_root="$app_root/resources/plugins"
+    local external_dir="$TMP_DIR/package-plugin-permissions-external"
+    local repair_log="$TMP_DIR/package-plugin-permissions.log"
+
+    mkdir -p "$plugins_root/openai-bundled/plugins" "$external_dir"
+    chmod 0700 "$external_dir"
+    chmod 0775 \
+        "$plugins_root" \
+        "$plugins_root/openai-bundled" \
+        "$plugins_root/openai-bundled/plugins"
+
+    # shellcheck disable=SC1091
+    source "$REPO_DIR/packaging/linux/codex-package-permissions.sh"
+    codex_desktop_harden_bundled_plugin_ancestors "$app_root"
+
+    assert_mode "$plugins_root" "755"
+    assert_mode "$plugins_root/openai-bundled" "755"
+    assert_mode "$plugins_root/openai-bundled/plugins" "755"
+
+    rm -rf "$plugins_root/openai-bundled"
+    ln -s "$external_dir" "$plugins_root/openai-bundled"
+    set +e
+    codex_desktop_harden_bundled_plugin_ancestors "$app_root" >"$repair_log" 2>&1
+    local repair_rc=$?
+    set -e
+
+    [ "$repair_rc" -ne 0 ] || fail "Plugin permission repair followed a symlinked ancestor"
+    assert_contains "$repair_log" "refusing symlinked plugin directory"
+    assert_mode "$external_dir" "700"
+}
+
 test_deb_builder_smoke() {
     info "Running Debian packaging smoke test"
     local workspace="$TMP_DIR/deb"
@@ -657,7 +691,10 @@ SCRIPT
     assert_contains "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" "is-enabled codex-update-manager.service"
     assert_not_contains "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" "enable --now codex-update-manager.service"
     assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-package-permissions.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-desktop-entry-doctor.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/packaging/linux/codex-package-permissions.sh"
+    assert_contains "$pkg_root/DEBIAN/postinst" "codex_desktop_harden_bundled_plugin_ancestors"
     assert_file_exists "$pkg_root/opt/codex-desktop/resources/node-runtime/bin/node"
     assert_contains "$pkg_root/DEBIAN/control" "libgtk-3-0t64 | libgtk-3-0"
     assert_not_contains "$pkg_root/DEBIAN/control" "libgtk-3.0-0"
@@ -1319,6 +1356,7 @@ SCRIPT
     assert_not_contains "$capture_dir/codex-desktop.spec" "at-spi2-atk"
     assert_not_contains "$capture_dir/codex-desktop.spec" "mesa-libgbm"
     assert_contains "$capture_dir/codex-desktop.spec" "codex_no_updater_cleanup_update_manager_service"
+    assert_contains "$capture_dir/codex-desktop.spec" "codex_desktop_harden_bundled_plugin_ancestors"
     assert_contains "$capture_dir/staging/opt/codex-desktop/.codex-linux/codex-no-updater-transition-cleanup.sh" "codex_no_updater_cleanup_user_enablement_links"
 
     rm -rf "$dist_dir" "$capture_dir"
@@ -1439,6 +1477,7 @@ SCRIPT
     assert_contains "$capture_dir/codex-desktop.install" "post_upgrade"
     assert_contains "$capture_dir/codex-desktop.install" "pre_remove"
     assert_contains "$capture_dir/codex-desktop.install" "codex-no-updater-transition-cleanup.sh"
+    assert_contains "$capture_dir/codex-desktop.install" "codex_desktop_harden_bundled_plugin_ancestors"
     assert_not_contains "$capture_dir/codex-desktop.install" "update-builder"
 }
 
@@ -10953,6 +10992,7 @@ main() {
     test_extract_webview_requires_entrypoint
     test_package_layout_requires_webview_entrypoint
     test_package_payload_permission_normalization
+    test_package_plugin_permission_repair
     test_deb_builder_smoke
     test_deb_builder_rebuilds_deleted_updater_source
     test_update_builder_preserves_enabled_linux_features_config

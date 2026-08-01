@@ -3,6 +3,7 @@ set -eu
 
 SERVICE_HELPER="/opt/codex-desktop/update-builder/packaging/linux/codex-update-manager-user-service.sh"
 DESKTOP_ENTRY_DOCTOR="/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh"
+PACKAGE_PERMISSIONS_HELPER="/opt/codex-desktop/.codex-linux/codex-package-permissions.sh"
 if [ -f "$SERVICE_HELPER" ]; then
     # shellcheck source=/opt/codex-desktop/update-builder/packaging/linux/codex-update-manager-user-service.sh
     . "$SERVICE_HELPER"
@@ -16,6 +17,11 @@ if [ -f "$DESKTOP_ENTRY_DOCTOR" ]; then
     # shellcheck source=/opt/codex-desktop/.codex-linux/codex-desktop-entry-doctor.sh
     . "$DESKTOP_ENTRY_DOCTOR"
     codex_desktop_repair_system_package_shadow_entries codex-desktop || true
+fi
+if [ -f "$PACKAGE_PERMISSIONS_HELPER" ]; then
+    # shellcheck source=/opt/codex-desktop/.codex-linux/codex-package-permissions.sh
+    . "$PACKAGE_PERMISSIONS_HELPER"
+    codex_desktop_harden_bundled_plugin_ancestors /opt/codex-desktop || true
 fi
 
 exit 0

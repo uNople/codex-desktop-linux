@@ -465,6 +465,7 @@ fi
 
 CLEANUP_HELPER="/opt/$package_name/.codex-linux/codex-no-updater-transition-cleanup.sh"
 DESKTOP_ENTRY_DOCTOR="/opt/$package_name/.codex-linux/codex-desktop-entry-doctor.sh"
+PACKAGE_PERMISSIONS_HELPER="/opt/$package_name/.codex-linux/codex-package-permissions.sh"
 if [ -f "\$CLEANUP_HELPER" ]; then
     # shellcheck source=/opt/$package_name/.codex-linux/codex-no-updater-transition-cleanup.sh
     . "\$CLEANUP_HELPER"
@@ -474,6 +475,11 @@ if [ -f "\$DESKTOP_ENTRY_DOCTOR" ]; then
     # shellcheck source=/opt/$package_name/.codex-linux/codex-desktop-entry-doctor.sh
     . "\$DESKTOP_ENTRY_DOCTOR"
     codex_desktop_repair_system_package_shadow_entries $package_name || true
+fi
+if [ -f "\$PACKAGE_PERMISSIONS_HELPER" ]; then
+    # shellcheck source=/opt/$package_name/.codex-linux/codex-package-permissions.sh
+    . "\$PACKAGE_PERMISSIONS_HELPER"
+    codex_desktop_harden_bundled_plugin_ancestors "/opt/$package_name" || true
 fi
 
 exit 0
@@ -510,6 +516,7 @@ write_no_updater_pacman_install_hooks() {
     cat > "$target" <<SCRIPT
 CLEANUP_HELPER="/opt/$package_name/.codex-linux/codex-no-updater-transition-cleanup.sh"
 DESKTOP_ENTRY_DOCTOR="/opt/$package_name/.codex-linux/codex-desktop-entry-doctor.sh"
+PACKAGE_PERMISSIONS_HELPER="/opt/$package_name/.codex-linux/codex-package-permissions.sh"
 
 codex_no_updater_cleanup_if_present() {
     if [ -f "\$CLEANUP_HELPER" ]; then
@@ -527,11 +534,20 @@ codex_desktop_repair_if_present() {
     fi
 }
 
+codex_desktop_harden_plugin_permissions_if_present() {
+    if [ -f "\$PACKAGE_PERMISSIONS_HELPER" ]; then
+        # shellcheck source=/opt/$package_name/.codex-linux/codex-package-permissions.sh
+        . "\$PACKAGE_PERMISSIONS_HELPER"
+        codex_desktop_harden_bundled_plugin_ancestors "/opt/$package_name" || true
+    fi
+}
+
 post_install() {
     if command -v update-desktop-database >/dev/null 2>&1; then
         update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
     fi
     codex_desktop_repair_if_present
+    codex_desktop_harden_plugin_permissions_if_present
     codex_no_updater_cleanup_if_present
 }
 
@@ -816,6 +832,9 @@ stage_common_package_files() {
     cp "$ICON_SOURCE" "$app_root/.codex-linux/$PACKAGE_NAME.png"
     cp "$REPO_DIR/launcher/cli-launch-path.py" "$app_root/.codex-linux/cli-launch-path.py"
     render_desktop_entry_doctor_helper "$app_root/.codex-linux/codex-desktop-entry-doctor.sh"
+    cp "$REPO_DIR/packaging/linux/codex-package-permissions.sh" \
+        "$app_root/.codex-linux/codex-package-permissions.sh"
+    chmod 0644 "$app_root/.codex-linux/codex-package-permissions.sh"
     render_desktop_entry "$root/usr/share/applications/$PACKAGE_NAME.desktop"
     cp "$ICON_SOURCE" "$root/usr/share/icons/hicolor/256x256/apps/$PACKAGE_NAME.png"
     if package_with_updater_enabled; then
@@ -902,6 +921,8 @@ stage_update_builder_bundle() {
     cp "$REPO_DIR/packaging/linux/codex-desktop.desktop" "$update_builder_root/packaging/linux/codex-desktop.desktop"
     cp "$REPO_DIR/packaging/linux/codex-desktop-entry-doctor.sh" \
         "$update_builder_root/packaging/linux/codex-desktop-entry-doctor.sh"
+    cp "$REPO_DIR/packaging/linux/codex-package-permissions.sh" \
+        "$update_builder_root/packaging/linux/codex-package-permissions.sh"
     cp "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "$update_builder_root/packaging/linux/codex-packaged-runtime.sh"
     cp "$REPO_DIR/packaging/linux/com.github.ilysenko.codex-desktop-linux.update.policy" \
         "$update_builder_root/packaging/linux/com.github.ilysenko.codex-desktop-linux.update.policy"

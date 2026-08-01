@@ -64,6 +64,11 @@ if [ -f "$DESKTOP_ENTRY_DOCTOR" ]; then
     . "$DESKTOP_ENTRY_DOCTOR"
     codex_desktop_repair_system_package_shadow_entries __PACKAGE_NAME__ || true
 fi
+PACKAGE_PERMISSIONS_HELPER=/opt/__PACKAGE_NAME__/.codex-linux/codex-package-permissions.sh
+if [ -f "$PACKAGE_PERMISSIONS_HELPER" ]; then
+    . "$PACKAGE_PERMISSIONS_HELPER"
+    codex_desktop_harden_bundled_plugin_ancestors /opt/__PACKAGE_NAME__ || true
+fi
 
 %if __PACKAGE_WITH_UPDATER__
 SERVICE_HELPER=/opt/__PACKAGE_NAME__/update-builder/packaging/linux/codex-update-manager-user-service.sh
