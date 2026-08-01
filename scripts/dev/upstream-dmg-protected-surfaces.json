@@ -519,7 +519,7 @@
     },
     {
       "id": "browser_use_policy_shims",
-      "title": "Browser Use policy shims and site-status allowlist",
+      "title": "Browser Use policy and Linux shims",
       "category": "webview",
       "pathPatterns": [
         "browser-client\\.mjs",

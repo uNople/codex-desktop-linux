@@ -411,25 +411,14 @@ function applyCurrentComputerUseSettingsContract(currentSource) {
 
   const availabilityMarkerPattern =
     /([A-Za-z_$][\w$]*)===`linux`&&\(([A-Za-z_$][\w$]*)=\{\.\.\.\2,available:!0,isFetching:!1,isLoading:!1\}\);/;
-  const cardMarkerPattern =
-    /let ([A-Za-z_$][\w$]*BundledMarketplaceDonor)=([A-Za-z_$][\w$]*)\.availablePlugins\.find\(e=>e\.marketplaceName===`openai-bundled`&&typeof e\.marketplacePath===`string`&&e\.marketplacePath\.startsWith\(`\/`\)&&e\.marketplacePath\.endsWith\(`\/\.agents\/plugins\/marketplace\.json`\)\);[^;]{0,1800}marketplacePath:\1\.marketplacePath/;
-  const hasAvailabilityMarker = availabilityMarkerPattern.test(currentSource);
-  const hasCardMarker = cardMarkerPattern.test(currentSource);
-
-  if (hasAvailabilityMarker && hasCardMarker) {
-    return currentSource;
-  }
-  if (hasAvailabilityMarker !== hasCardMarker) {
-    console.warn(
-      "WARN: Could not find the complete current Computer Use settings contract — skipping Linux Computer Use UI availability patch",
-    );
+  if (availabilityMarkerPattern.test(currentSource)) {
     return currentSource;
   }
 
   let availabilityChanged = false;
   const availabilityPattern =
     /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([^)]*)\),\{platform:([A-Za-z_$][\w$]*)\}=([A-Za-z_$][\w$]*)\(\),([A-Za-z_$][\w$]*)=/g;
-  let patchedSource = currentSource.replace(
+  const patchedSource = currentSource.replace(
     availabilityPattern,
     (match, availabilityVar, hookVar, hookArg, platformVar, platformHookVar, nextVar, offset) => {
       const nextSource = currentSource.slice(offset + match.length, offset + match.length + 3000);
@@ -444,49 +433,7 @@ function applyCurrentComputerUseSettingsContract(currentSource) {
     },
   );
 
-  let cardChanged = false;
-  const cardPattern =
-    /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\3\),((?:[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),)+)([A-Za-z_$][\w$]*);/g;
-  patchedSource = patchedSource.replace(
-    cardPattern,
-    (
-      match,
-      pluginsQueryVar,
-      pluginsHookVar,
-      selectedHostVar,
-      emptyPluginsVar,
-      marketplacePathVar,
-      marketplacePathHookVar,
-      intermediateDeclarations,
-      computerUsePluginVar,
-      offset,
-    ) => {
-      const lookback = patchedSource.slice(Math.max(0, offset - 900), offset);
-      const nextSource = patchedSource.slice(offset + match.length, offset + match.length + 800);
-      const platformVar = lookback.match(
-        /\{computerUseAvailability:[A-Za-z_$][\w$]*,platform:([A-Za-z_$][\w$]*)\}=/,
-      )?.[1];
-      const pluginNameVar = nextSource.match(
-        new RegExp(
-          String.raw`${computerUsePluginVar}=[A-Za-z_$][\w$]*\(${pluginsQueryVar}\.availablePlugins,([A-Za-z_$][\w$]*),${marketplacePathVar}\)`,
-        ),
-      )?.[1];
-      if (platformVar == null || pluginNameVar == null) {
-        return match;
-      }
-      const bundledMarketplaceDonorVar =
-        `${computerUsePluginVar}BundledMarketplaceDonor`;
-      cardChanged = true;
-      return `let ${pluginsQueryVar}=${pluginsHookVar}(${selectedHostVar},${emptyPluginsVar}),${marketplacePathVar}=${marketplacePathHookVar}(${selectedHostVar}),${intermediateDeclarations.slice(0, -1)};let ${bundledMarketplaceDonorVar}=${pluginsQueryVar}.availablePlugins.find(e=>e.marketplaceName===\`openai-bundled\`&&typeof e.marketplacePath===\`string\`&&e.marketplacePath.startsWith(\`/\`)&&e.marketplacePath.endsWith(\`/.agents/plugins/marketplace.json\`));${platformVar}===\`linux\`&&${bundledMarketplaceDonorVar}!=null&&!${pluginsQueryVar}.availablePlugins.some(e=>e.plugin?.name===${pluginNameVar}||e.plugin?.id?.split(\`@\`)[0]===${pluginNameVar})&&(${pluginsQueryVar}={...${pluginsQueryVar},availablePlugins:[...${pluginsQueryVar}.availablePlugins,{marketplaceName:\`openai-bundled\`,marketplacePath:${bundledMarketplaceDonorVar}.marketplacePath,logoPath:new URL(\`computer-use-plugin-icon-linux.png\`,import.meta.url).href,logoDarkPath:new URL(\`computer-use-plugin-icon-linux.png\`,import.meta.url).href,plugin:{id:${pluginNameVar},name:${pluginNameVar},installed:!0,enabled:!0}}]});let ${computerUsePluginVar};`;
-    },
-  );
-
-  if (
-    availabilityChanged &&
-    cardChanged &&
-    availabilityMarkerPattern.test(patchedSource) &&
-    cardMarkerPattern.test(patchedSource)
-  ) {
+  if (availabilityChanged && availabilityMarkerPattern.test(patchedSource)) {
     return patchedSource;
   }
 

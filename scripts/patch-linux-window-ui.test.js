@@ -9640,15 +9640,15 @@ test("Computer Use availability descriptor matches the current settings bundle n
   assert.doesNotMatch("use-native-apps.electron-DhuUEit1.js", descriptor.pattern);
 });
 
-test("enables the current Computer Use settings contract on Linux", () => {
+test("enables the latest Computer Use settings contract on Linux", () => {
   const source =
-    "function Ht(){let e=cache(24),{selectedHostId:t}=host(),n=data(t),i={hostId:t};" +
-    "let a=useAvailability(i),{platform:o}=usePlatform(),s=hostKind(t)===`local`,c=flag(`188145323`);" +
-    "let f=jsx(Settings,{computerUseAvailability:a,platform:o});" +
-    "let h=a.available?jsx(AllowedApps,{}):null;return jsx(Page,{children:[f,h]})}" +
-    "function Wt(e){let t=cache(35),{computerUseAvailability:n,platform:i}=e,{selectedHostId:s}=host();" +
-    "let g=[];let _=usePlugins(s,g),v=useMarketplacePath(s),y=useFlag(firstFlag),b=useFlag(secondFlag),x;" +
-    "x=selectPlugin(_.availablePlugins,computerUsePluginName,v);return x}";
+    "function Pn(){let e=cache(29),{selectedHostId:t}=host(),n=data(A,t),i={hostId:t};" +
+    "let a=useAvailability(i),{platform:o}=usePlatform(),s=hostKind(t),u=flag(`188145323`);" +
+    "let y=jsx(Settings,{computerUseAvailability:a,platform:o});" +
+    "let S=a.available?jsx(AllowedApps,{}):null;return jsx(Page,{children:[y,S]})}" +
+    "function In(e){let{computerUseAvailability:n,platform:i}=e,C=usePlugins(hostId,[])," +
+    "w=useMarketplacePath(hostId),F=selectPlugin(C.availablePlugins,computerUsePluginName,w);" +
+    "return n.available&&F}";
 
   const patched = applyPatchTwice(applyLinuxComputerUseRendererAvailabilityPatch, source);
 
@@ -9656,247 +9656,25 @@ test("enables the current Computer Use settings contract on Linux", () => {
     patched,
     /o===`linux`&&\(a=\{\.\.\.a,available:!0,isFetching:!1,isLoading:!1\}\);/,
   );
-  assert.match(patched, /marketplaceName:`openai-bundled`/);
+  assert.doesNotMatch(patched, /BundledMarketplaceDonor|marketplaceName:`openai-bundled`/);
+  assert.equal(applyLinuxComputerUseRendererAvailabilityPatch(patched), patched);
 });
 
-test("reuses current bundled-plugin metadata for the synthetic Computer Use card", () => {
+test("leaves an already-enabled latest Computer Use settings contract byte-stable", () => {
   const source =
-    "function Ht(){let e=cache(24),{selectedHostId:t}=host(),n=data(t),i={hostId:t};" +
-    "let a=useAvailability(i),{platform:o}=usePlatform(),s=hostKind(t)===`local`,c=flag(`188145323`);" +
-    "let f=jsx(Settings,{computerUseAvailability:a,platform:o});" +
-    "let h=a.available?jsx(AllowedApps,{}):null;return jsx(Page,{children:[f,h]})}" +
-    "function Wt(e){let t=cache(35),{computerUseAvailability:n,platform:i}=e,{selectedHostId:s}=host();" +
-    "let g=[];let _=usePlugins(s,g),v=useMarketplacePath(s),y=useFlag(firstFlag),b=useFlag(secondFlag),x;" +
-    "x=selectPlugin(_.availablePlugins,computerUsePluginName,v);return x}";
-  const patched = applyPatchTwice(applyLinuxComputerUseRendererAvailabilityPatch, source);
-  const testHomeDirectory = "/home/test-user";
-  const bundledMarketplaceRoot = "/tmp/codex-test/openai-bundled";
-  const bundledMarketplaceManifest =
-    `${bundledMarketplaceRoot}/.agents/plugins/marketplace.json`;
-  const incorrectHomeRelativeManifest =
-    `${testHomeDirectory}/.agents/plugins/marketplace.json`;
-  const chromeDonor = {
-    marketplaceName: "openai-bundled",
-    marketplacePath: bundledMarketplaceManifest,
-    marketplaceDisplayName: null,
-    remoteMarketplaceName: null,
-    plugin: { id: "chrome@openai-bundled", name: "chrome", installed: true, enabled: true },
-  };
-  let lastSelectedPlugin = null;
-
-  function availablePluginsFor({
-    availablePlugins = [chromeDonor],
-    homeDirectory = testHomeDirectory,
-    platform = "linux",
-  } = {}) {
-    let selectedPlugins = null;
-    const context = {
-      AllowedApps: "AllowedApps",
-      Page: "Page",
-      Settings: "Settings",
-      URL,
-      b: false,
-      cache: () => ({}),
-      computerUsePluginName: "computer-use",
-      data: () => null,
-      firstFlag: "first",
-      flag: () => false,
-      host: () => ({ selectedHostId: "local" }),
-      hostKind: () => ({ kind: "local" }),
-      jsx: () => null,
-      secondFlag: "second",
-      selectPlugin: (plugins) => {
-        selectedPlugins = plugins;
-        lastSelectedPlugin =
-          plugins.find((plugin) => plugin.plugin?.name === "computer-use") ?? null;
-        return lastSelectedPlugin;
-      },
-      useAvailability: () => ({ available: false }),
-      useFlag: () => false,
-      useMarketplacePath: () => homeDirectory,
-      usePlatform: () => ({ platform }),
-      usePlugins: () => ({ availablePlugins }),
-    };
-
-    vm.runInNewContext(
-      `${patched.replaceAll("import.meta.url", "`file:///tmp/computer-use-settings.js`")};` +
-        `Wt({computerUseAvailability:{},platform:${JSON.stringify(platform)}})`,
-      context,
-    );
-    return Array.from(selectedPlugins);
-  }
-
-  const plugins = availablePluginsFor();
-  assert.equal(plugins.length, 2);
-  assert.equal(plugins[0], chromeDonor);
-  assert.equal(plugins[1].plugin.name, "computer-use");
-  assert.equal(plugins[1].marketplacePath, bundledMarketplaceManifest);
-  assert.notEqual(plugins[1].marketplacePath, incorrectHomeRelativeManifest);
-  assert.equal(lastSelectedPlugin, plugins[1]);
-  assert.equal(lastSelectedPlugin.marketplaceName, "openai-bundled");
-  assert.equal(lastSelectedPlugin.marketplacePath, bundledMarketplaceManifest);
-
-  const laterValidDonor = {
-    marketplaceName: "openai-bundled",
-    marketplacePath: bundledMarketplaceManifest,
-    plugin: { id: "visualize@openai-bundled", name: "visualize" },
-  };
-  const pluginsWithLaterDonor = availablePluginsFor({
-    availablePlugins: [
-      {
-        marketplaceName: "openai-bundled",
-        marketplacePath: bundledMarketplaceRoot,
-        plugin: { id: "browser@openai-bundled", name: "browser" },
-      },
-      laterValidDonor,
-    ],
-  });
-  assert.equal(pluginsWithLaterDonor[0].plugin.name, "browser");
-  assert.equal(pluginsWithLaterDonor[1], laterValidDonor);
-  assert.equal(pluginsWithLaterDonor[2].marketplacePath, bundledMarketplaceManifest);
-
-  const realComputerUse = {
-    marketplaceName: "openai-bundled",
-    marketplacePath: bundledMarketplaceManifest,
-    plugin: { id: "computer-use@openai-bundled", name: "computer-use" },
-  };
-  assert.deepEqual(
-    availablePluginsFor({ availablePlugins: [chromeDonor, realComputerUse] }).map(
-      (plugin) => plugin.plugin.name,
-    ),
-    ["chrome", "computer-use"],
-  );
-
-  for (const marketplacePath of [
-    null,
-    undefined,
-    bundledMarketplaceRoot,
-    "codex-test/openai-bundled/.agents/plugins/marketplace.json",
-    `file://${bundledMarketplaceManifest}`,
-    "https://example.test/openai-bundled/.agents/plugins/marketplace.json",
-  ]) {
-    assert.deepEqual(
-      availablePluginsFor({
-        availablePlugins: [
-          {
-            marketplaceName: "openai-bundled",
-            marketplacePath,
-            plugin: { id: "browser@openai-bundled", name: "browser" },
-          },
-        ],
-      }).map((plugin) => plugin.plugin.name),
-      ["browser"],
-    );
-  }
-
-  for (const marketplaceName of ["openai-primary-runtime", "openai-curated-remote"]) {
-    assert.deepEqual(
-      availablePluginsFor({
-        availablePlugins: [
-          {
-            marketplaceName,
-            marketplacePath: bundledMarketplaceManifest,
-            plugin: { id: `browser@${marketplaceName}`, name: "browser" },
-          },
-        ],
-      }).map((plugin) => plugin.plugin.name),
-      ["browser"],
-    );
-  }
-
-  assert.deepEqual(
-    availablePluginsFor({ availablePlugins: [] }).map((plugin) => plugin.plugin.name),
-    [],
-  );
-  assert.deepEqual(
-    availablePluginsFor({ platform: "macOS" }).map((plugin) => plugin.plugin.name),
-    ["chrome"],
-  );
-  assert.deepEqual(
-    availablePluginsFor({
-      homeDirectory: "/synthetic/alternate-home",
-      availablePlugins: [
-        {
-          marketplaceName: "openai-bundled",
-          marketplacePath: bundledMarketplaceManifest,
-          plugin: { id: "browser@openai-bundled", name: "browser" },
-        },
-      ],
-    }).map((plugin) => plugin.plugin.name),
-    ["browser", "computer-use"],
-  );
-
-  assert.equal(
-    applyLinuxComputerUseRendererAvailabilityPatch(patched),
-    patched,
-    "a second application must be byte-stable",
-  );
-});
-
-test("does not mistake legacy synthetic Computer Use card paths for the current patch", () => {
-  const prefix =
-    "function Ht(){let a=useAvailability(arg),{platform:o}=usePlatform();" +
+    "function Pn(){let a=useAvailability(arg),{platform:o}=usePlatform();" +
     "o===`linux`&&(a={...a,available:!0,isFetching:!1,isLoading:!1});" +
-    "let f=jsx(Settings,{computerUseAvailability:a,platform:o});" +
-    "let h=a.available?jsx(AllowedApps,{}):null;return jsx(Page,{children:[f,h]})}";
-  const suffix =
-    "let x;x=selectPlugin(_.availablePlugins,pluginName,v);return x}";
-  const legacyCards = [
-    "i===`linux`&&!_.availablePlugins.some(e=>e.plugin?.name===pluginName||e.plugin?.id?.split(`@`)[0]===pluginName)&&(_={..._,availablePlugins:[..._.availablePlugins,{marketplaceName:`openai-bundled`,marketplacePath:v,logoPath:new URL(`computer-use-plugin-icon-linux.png`,import.meta.url).href,logoDarkPath:new URL(`computer-use-plugin-icon-linux.png`,import.meta.url).href,plugin:{id:pluginName,name:pluginName,installed:!0,enabled:!0}}]});",
-    "i===`linux`&&typeof v===`string`&&v.startsWith(`/`)&&!_.availablePlugins.some(e=>e.plugin?.name===pluginName||e.plugin?.id?.split(`@`)[0]===pluginName)&&(_={..._,availablePlugins:[..._.availablePlugins,{marketplaceName:`openai-bundled`,marketplacePath:v.replace(/\\/+$/,``).endsWith(`/.agents/plugins/marketplace.json`)?v.replace(/\\/+$/,``):v.replace(/\\/+$/,``)+`/.agents/plugins/marketplace.json`,logoPath:new URL(`computer-use-plugin-icon-linux.png`,import.meta.url).href,logoDarkPath:new URL(`computer-use-plugin-icon-linux.png`,import.meta.url).href,plugin:{id:pluginName,name:pluginName,installed:!0,enabled:!0}}]});",
-  ];
+    "let y=jsx(Settings,{computerUseAvailability:a,platform:o});" +
+    "return a.available?y:null}function In(){return usePlugins(hostId,[]).availablePlugins}";
 
-  for (const legacyCard of legacyCards) {
-    const source =
-      prefix +
-      "function Wt(e){let{computerUseAvailability:n,platform:i}=e;" +
-      "let _=usePlugins(hostId,empty),v=useMarketplacePath(hostId),y=useFlag(firstFlag),b=useFlag(secondFlag);" +
-      legacyCard +
-      suffix;
-    const { value: patched, warnings } = captureWarns(() =>
-      applyLinuxComputerUseRendererAvailabilityPatch(source),
-    );
-
-    assert.equal(patched, source);
-    assert.deepEqual(warnings, [
-      "WARN: Could not find the complete current Computer Use settings contract — skipping Linux Computer Use UI availability patch",
-    ]);
-  }
+  assert.equal(applyLinuxComputerUseRendererAvailabilityPatch(source), source);
 });
 
-test("does not treat an unrelated marketplace manifest suffix as the current patch", () => {
+test("fails soft when the latest Computer Use availability shape drifts", () => {
   const source =
-    "const unrelated=`/.agents/plugins/marketplace.json`;" +
-    "function Ht(){let e=cache(24),{selectedHostId:t}=host(),n=data(t),i={hostId:t};" +
-    "let a=useAvailability(i),{platform:o}=usePlatform(),s=hostKind(t)===`local`,c=flag(`188145323`);" +
-    "let f=jsx(Settings,{computerUseAvailability:a,platform:o});" +
-    "let h=a.available?jsx(AllowedApps,{}):null;return jsx(Page,{children:[f,h]})}" +
-    "function Wt(e){let t=cache(35),{computerUseAvailability:n,platform:i}=e,{selectedHostId:s}=host();" +
-    "let g=[];let _=usePlugins(s,g),v=useMarketplacePath(s),y=useFlag(firstFlag),b=useFlag(secondFlag),x;" +
-    "x=selectPlugin(_.availablePlugins,computerUsePluginName,v);return x}";
-
-  const patched = applyLinuxComputerUseRendererAvailabilityPatch(source);
-
-  assert.notEqual(patched, source);
-  assert.match(
-    patched,
-    /marketplaceName===`openai-bundled`&&typeof [A-Za-z_$][\w$]*\.marketplacePath===`string`/,
-  );
-  assert.match(
-    patched,
-    /\.marketplacePath\.endsWith\(`\/\.agents\/plugins\/marketplace\.json`\)/,
-  );
-});
-
-test("does not report partial current Computer Use settings patches as applied", () => {
-  const source =
-    "function Ht(){let a=useAvailability(arg),{platform:o}=usePlatform(),s=hostKind(hostId);" +
-    "let f=jsx(Settings,{computerUseAvailability:a,platform:o});" +
-    "let h=a.available?jsx(AllowedApps,{}):null;return jsx(Page,{children:[f,h]})}" +
-    "function Wt(e){let{computerUseAvailability:n,platform:i}=e;" +
-    "let _=usePlugins(hostId,empty),v=useMarketplacePath(hostId),y=useFlag(firstFlag),b=useFlag(secondFlag);" +
-    "i===`linux`&&!_.availablePlugins.some(e=>e.plugin?.name===pluginName||e.plugin?.id?.split(`@`)[0]===pluginName)&&(_={..._,availablePlugins:[..._.availablePlugins,{marketplaceName:`openai-bundled`,marketplacePath:v,logoPath:new URL(`computer-use-plugin-icon-linux.png`,import.meta.url).href,logoDarkPath:new URL(`computer-use-plugin-icon-linux.png`,import.meta.url).href,plugin:{id:pluginName,name:pluginName,installed:!0,enabled:!0}}]});" +
-    "let x;x=selectPlugin(_.availablePlugins,pluginName,v);return x}";
+    "function Pn(){let availability=useAvailability(arg),platform=usePlatform();" +
+    "return jsx(Settings,{computerUseAvailability:availability,platform})}" +
+    "function In(){return usePlugins(hostId,[]).availablePlugins}";
 
   const { value: patched, warnings } = captureWarns(() =>
     applyLinuxComputerUseRendererAvailabilityPatch(source),
@@ -10778,7 +10556,7 @@ test("missing icon asset skips only icon patches", () => {
   }
 });
 
-test("patchExtractedApp selects the exact 26.721 Computer Use app-initial contract", () => {
+test("patchExtractedApp patches the latest Computer Use settings and app-initial contracts", () => {
   withIsolatedHome(() => {
     process.env[COMPUTER_USE_UI_ENV_VAR] = "1";
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-computer-use-apps-assets-test-"));
@@ -10836,7 +10614,7 @@ test("patchExtractedApp selects the exact 26.721 Computer Use app-initial contra
         patchedSettings,
         /o===`linux`&&\(a=\{\.\.\.a,available:!0,isFetching:!1,isLoading:!1\}\);/,
       );
-      assert.match(patchedSettings, /marketplaceName:`openai-bundled`/);
+      assert.doesNotMatch(patchedSettings, /BundledMarketplaceDonor/);
       assert.match(patchedAppInitial, /let p=f&&i!==`computer-use`,m;/);
       assert.match(
         patchedAppInitial,
