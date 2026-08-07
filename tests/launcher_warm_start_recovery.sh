@@ -11,11 +11,11 @@ APPIMAGE_PATH="$TMP_DIR/codex-desktop.AppImage"
 APPIMAGE_RECOVERY="${CODEX_TEST_APPIMAGE_REMOUNT:-0}"
 HOME_DIR="$TMP_DIR/home"
 RUNTIME_DIR="$TMP_DIR/runtime"
-STATE_DIR="$HOME_DIR/.local/state/codex-desktop"
-SOCKET_PATH="$RUNTIME_DIR/codex-desktop/launch-action.sock"
+STATE_DIR="$HOME_DIR/.local/state/codex-warm-start-test"
+SOCKET_PATH="$RUNTIME_DIR/codex-warm-start-test/launch-action.sock"
 FIRST_LOG="$TMP_DIR/first-launch.log"
 SECOND_LOG="$TMP_DIR/second-launch.log"
-APP_LOG="$HOME_DIR/.cache/codex-desktop/launcher.log"
+APP_LOG="$HOME_DIR/.cache/codex-warm-start-test/launcher.log"
 LAUNCHER_PID=""
 SOCKET_PID=""
 HOOK_PID=""
@@ -64,7 +64,7 @@ wait_for() {
     local description="$1"
     shift
     local attempt
-    for attempt in $(seq 1 100); do
+    for attempt in $(seq 1 300); do
         "$@" && return 0
         sleep 0.05
     done
@@ -103,9 +103,9 @@ mkdir -p \
     "$APP_DIR/.codex-linux/after-exit.d" \
     "$APP_DIR/content/webview" \
     "$APP_DIR/resources/node-runtime/bin" \
-    "$HOME_DIR/.config/codex-desktop" \
+    "$HOME_DIR/.config/codex-warm-start-test" \
     "$HOME_DIR" \
-    "$RUNTIME_DIR/codex-desktop"
+    "$RUNTIME_DIR/codex-warm-start-test"
 
 if [ "${CODEX_TEST_DISABLE_PIDFD:-0}" = "1" ]; then
     mkdir -p "$TMP_DIR/python-site"
@@ -124,7 +124,7 @@ fi
 
 if [ "${CODEX_TEST_DISABLE_WARM_START:-0}" = "1" ]; then
     printf '%s\n' '{"codex-linux-warm-start-enabled":false}' \
-        > "$HOME_DIR/.config/codex-desktop/settings.json"
+        > "$HOME_DIR/.config/codex-warm-start-test/settings.json"
 fi
 
 PORT="$(python3 - <<'PY'
@@ -139,7 +139,7 @@ PY
     printf '%s\n' \
         '#!/usr/bin/env bash' \
         'set -Eeuo pipefail' \
-        'CODEX_LINUX_APP_ID=codex-desktop' \
+        'CODEX_LINUX_APP_ID=codex-warm-start-test' \
         'CODEX_LINUX_APP_DISPLAY_NAME="ChatGPT Desktop"' \
         'CODEX_LINUX_WEBVIEW_PORT="${CODEX_WEBVIEW_PORT:-5175}"'
     cat "$REPO_DIR/launcher/start.sh.template"
