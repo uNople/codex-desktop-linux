@@ -143,8 +143,8 @@ const Cb="/tmp/codex-browser-use";
 const entries=["extension-123.sock","iab-session.sock","extension-stale.sock"];
 const yP=async()=>entries;
 const wP={resolve:(root,entry)=>root+"/"+entry};
-const _P=()=>"linux";
-export const EV=()=>_P()==="win32"?TV():CV(),CV=async()=>(await yP(Cb)).map(e=>wP.resolve(Cb,e)),TV=async()=>[];
+const kE=()=>Cb;
+export const EV=e=>e.platform==="win32"?TV(e):CV(e),CV=async e=>{let t=kE(e.platform);return(await yP(t)).map(n=>wP.resolve(t,n))},TV=async e=>[];
 `;
 
   try {
@@ -159,7 +159,9 @@ export const EV=()=>_P()==="win32"?TV():CV(),CV=async()=>(await yP(Cb)).map(e=>w
     assert.equal(fs.readFileSync(clientPath, "utf8"), patched);
 
     const module = await import(`${pathToFileURL(clientPath).href}?patched=1`);
-    assert.deepEqual(await module.CV(), ["/tmp/codex-browser-use/iab-session.sock"]);
+    assert.deepEqual(await module.EV({ platform: "linux" }), [
+      "/tmp/codex-browser-use/iab-session.sock",
+    ]);
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
   }
@@ -169,7 +171,7 @@ test("leaves an unrelated socket-directory map unchanged", () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codex-iab-unrelated-"));
   const clientPath = path.join(workspace, "browser-client.mjs");
   const fixture =
-    'const Cb="/tmp/codex-browser-use";const CV=async()=>(await yP(Cb)).map(e=>wP.resolve(Cb,e));';
+    'const Cb="/tmp/codex-browser-use";const CV=async e=>{let t=kE(e.platform);return(await yP(t)).map(n=>wP.resolve(t,n))};';
 
   try {
     fs.writeFileSync(clientPath, fixture, "utf8");
@@ -187,9 +189,9 @@ test("leaves ambiguous IAB discovery chains unchanged", () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codex-iab-ambiguous-"));
   const clientPath = path.join(workspace, "browser-client.mjs");
   const chain = (suffix) =>
-    `EV${suffix}=()=>P${suffix}()==="win32"?TV${suffix}():CV${suffix}(),` +
-    `CV${suffix}=async()=>(await Y${suffix}(C${suffix})).map(e=>W${suffix}.resolve(C${suffix},e)),` +
-    `TV${suffix}=async()=>[]`;
+    `EV${suffix}=e=>e.platform==="win32"?TV${suffix}(e):CV${suffix}(e),` +
+    `CV${suffix}=async e=>{let t=K${suffix}(e.platform);return(await Y${suffix}(t)).map(n=>W${suffix}.resolve(t,n))},` +
+    `TV${suffix}=async e=>[]`;
   const fixture = `const root="/tmp/codex-browser-use";${chain("A")};${chain("B")};`;
 
   try {
