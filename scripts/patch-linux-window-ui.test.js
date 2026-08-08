@@ -196,7 +196,9 @@ const {
   applyLinuxThreadSidePanelNativeTooltipPatch,
   applyLinuxTooltipWindowControlsCollisionPatch,
   applyLinuxWindowControlsSafeAreaPatch,
+  applyPluginMentionFollowUpQueuePatch,
   applySubagentNicknameMetadataPatch,
+  applySubagentPanelHistoryHydrationPatch,
   codexLinuxWatchBrowserWebviewAttachment,
 } = require("./patches/impl/webview/index.js");
 const {
@@ -543,17 +545,22 @@ test("subagent nickname metadata patch accepts session metadata shape", () => {
     "function Pi(){return{parentThreadId:null,depth:null,agentNickname:null,agentRole:null}}",
     "function Xl(e){return e==null?null:Zl(e.agentNickname)??Zl(B(e.source)?.agentNickname)}",
     "function Zl(e){if(e==null)return null;let t=e.trim();return t.length===0?null:t}",
+    "function YGa({conversationsMeta:e,hostIds:t,projectLabelByThreadKey:n}){return e.filter(e=>t.has(e.hostId??`local`)&&(e.source==null||typeof e.source==`string`||!(`subAgent`in e.source)))}",
   ].join("");
   const patched = applyPatchTwice(applySubagentNicknameMetadataPatch, source);
 
   assert.match(patched, /`subAgent`in e\?e\.subAgent:`subagent`in e\?e\.subagent:null/);
   assert.match(patched, /Zl\(e\.agentNickname\)\?\?Zl\(e\.agent_nickname\)\?\?Zl\(B\(e\.source\)\?\.agentNickname\)/);
+  assert.match(
+    patched,
+    /!\(`subAgent`in e\.source\)&&!\(`subagent`in e\.source\)/,
+  );
 
   const sandbox = {
     result: null,
   };
   vm.runInNewContext(
-    `${patched};result={top:Xl({agent_nickname:\`Ned\`}),source:Xl({source:{subagent:{thread_spawn:{parent_thread_id:\`parent\`,depth:1,agent_nickname:\`Pepper Potts\`,agent_role:\`worker\`}}}}),role:B({subagent:{thread_spawn:{parent_thread_id:\`parent\`,depth:1,agent_nickname:\`Pepper Potts\`,agent_role:\`worker\`}}}).agentRole};`,
+    `${patched};result={top:Xl({agent_nickname:\`Ned\`}),source:Xl({source:{subagent:{thread_spawn:{parent_thread_id:\`parent\`,depth:1,agent_nickname:\`Pepper Potts\`,agent_role:\`worker\`}}}}),role:B({subagent:{thread_spawn:{parent_thread_id:\`parent\`,depth:1,agent_nickname:\`Pepper Potts\`,agent_role:\`worker\`}}}).agentRole,search:YGa({conversationsMeta:[{id:\`main\`,hostId:\`local\`,source:\`vscode\`},{id:\`lower\`,hostId:\`local\`,source:{subagent:{}}},{id:\`camel\`,hostId:\`local\`,source:{subAgent:{}}}],hostIds:new Set([\`local\`]),projectLabelByThreadKey:new Map}).map(e=>e.id)};`,
     sandbox,
   );
 
@@ -561,7 +568,104 @@ test("subagent nickname metadata patch accepts session metadata shape", () => {
     top: "Ned",
     source: "Pepper Potts",
     role: "worker",
+    search: ["main"],
   });
+});
+
+test("subagent panel loads older history when hydration leaves an empty turn list", async () => {
+  const source = [
+    "const title=`localConversation.subagentsPanel.title`;",
+    "async function Qo(e,{hostId:t,parentConversationId:n,selectedConversationId:r=null,selectedDisplayName:a=null}){",
+    "let s=!1,g=[],u=!0;",
+    "let b=!0&&e.get(j,n)===!0&&e.get(cn,n)?.some(e=>e.turnId===`turn`)===!1,x=!1;",
+    "if(!s&&!e.get(j,r)&&!x&&g.push(Mt(`hydrate-background-threads`,{hostId:t,includeTurns:!0,threadIds:[r]})),await Promise.all(g),u){return b??a}",
+    "}",
+  ].join("");
+  const patched = applyPatchTwice(
+    applySubagentPanelHistoryHydrationPatch,
+    source,
+  );
+  const calls = [];
+  const sandbox = {
+    cn: "turns",
+    j: "loaded",
+    Mt(method, params) {
+      calls.push({ method, params });
+      return Promise.resolve();
+    },
+  };
+  const openPanel = vm.runInNewContext(`${patched};Qo`, sandbox);
+  const store = {
+    get(atom, conversationId) {
+      if (atom === "loaded") {
+        return conversationId === "parent";
+      }
+      return [];
+    },
+  };
+
+  await openPanel(store, {
+    hostId: "local",
+    parentConversationId: "parent",
+    selectedConversationId: "child",
+  });
+
+  assert.deepEqual(calls.map(({ method }) => method), [
+    "hydrate-background-threads",
+    "load-older-conversation-history-page",
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[1].params)), {
+    conversationId: "child",
+    dependentConversationIds: [],
+    hostId: "local",
+  });
+});
+
+test("active-turn plugin mentions queue for a fresh turn context", async () => {
+  const source = [
+    "const followUpQueueMode=`steer`;",
+    "const getMentionedPluginIdsKey=`present`;",
+    "async function dGs({composerController:o,conversationId:s,canQueueFollowUp:c,defaultFollowUpSubmitAction:l,followUp:d,isResponseInProgress:y,options:k={}}){",
+    "let{followUpSubmitAction:G=l}=k;",
+    "let le=c&&d?.type===`local`&&y&&G===`queue`,ue=null;",
+    "return le",
+    "}",
+  ].join("");
+  const patched = applyPatchTwice(
+    applyPluginMentionFollowUpQueuePatch,
+    source,
+  );
+  const shouldQueue = vm.runInNewContext(`${patched};dGs`);
+  const args = {
+    canQueueFollowUp: true,
+    conversationId: "thread",
+    defaultFollowUpSubmitAction: "steer",
+    followUp: { type: "local" },
+    isResponseInProgress: true,
+  };
+
+  assert.equal(
+    await shouldQueue({
+      ...args,
+      composerController: { hasPluginBackedMentions: () => true },
+    }),
+    true,
+  );
+  assert.equal(
+    await shouldQueue({
+      ...args,
+      composerController: { hasPluginBackedMentions: () => false },
+    }),
+    false,
+  );
+  assert.equal(
+    await shouldQueue({
+      ...args,
+      composerController: { hasPluginBackedMentions: () => false },
+      options: { followUpSubmitAction: "queue" },
+    }),
+    true,
+  );
 });
 
 test("subagent nickname metadata patch accepts current upstream patched aliases", () => {
@@ -1051,7 +1155,9 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-tooltip-window-controls-collision",
     "linux-thread-side-panel-native-tooltip",
     "linux-fast-mode-model-guard",
+    "plugin-mention-follow-up-context",
     "subagent-nickname-metadata-shape",
+    "subagent-panel-history-hydration",
     "local-environment-action-modal-draft",
     "linux-computer-use-ui-availability",
     "linux-computer-use-host-platform",

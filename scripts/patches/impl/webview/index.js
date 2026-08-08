@@ -1729,6 +1729,8 @@ function applySubagentNicknameMetadataPatch(currentSource) {
     /`subAgent`in ([A-Za-z_$][\w$]*)\?\1\.subAgent:`subagent`in \1\?\1\.subagent:null/u;
   const nicknamePatchedRegex =
     /([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\.agentNickname\)\?\?\1\(\2\.agent_nickname\)\?\?\1\([A-Za-z_$][\w$]*\(\2\.source\)\?\.agentNickname\)/u;
+  const taskSearchPatchedRegex =
+    /\(([A-Za-z_$][\w$]*)\.source==null\|\|typeof \1\.source==`string`\|\|!\(`subAgent`in \1\.source\)&&!\(`subagent`in \1\.source\)\)/u;
 
   const sourceShapeNeedle =
     "function Mi(e){return`subAgent`in e?e.subAgent:null}function Ni(e){return typeof e==`string`?Pi():`thread_spawn`in e?{parentThreadId:j(e.thread_spawn.parent_thread_id),depth:e.thread_spawn.depth,agentNickname:e.thread_spawn.agent_nickname,agentRole:e.thread_spawn.agent_role}:Pi()}";
@@ -1768,6 +1770,21 @@ function applySubagentNicknameMetadataPatch(currentSource) {
     }
   }
 
+  if (!taskSearchPatchedRegex.test(patchedSource)) {
+    const taskSearchRegex =
+      /\(([A-Za-z_$][\w$]*)\.source==null\|\|typeof \1\.source==`string`\|\|!\(`subAgent`in \1\.source\)\)/u;
+    if (taskSearchRegex.test(patchedSource)) {
+      patchedSource = patchedSource.replace(
+        taskSearchRegex,
+        "($1.source==null||typeof $1.source==`string`||!(`subAgent`in $1.source)&&!(`subagent`in $1.source))",
+      );
+    } else if (patchedSource.includes("projectLabelByThreadKey")) {
+      console.warn(
+        "WARN: Could not find subagent task-search filter needle — skipping lowercase source filter patch",
+      );
+    }
+  }
+
   if (
     patchedSource === currentSource &&
     !(sourceShapePatchedRegex.test(currentSource) && nicknamePatchedRegex.test(currentSource)) &&
@@ -1781,6 +1798,89 @@ function applySubagentNicknameMetadataPatch(currentSource) {
   }
 
   return patchedSource;
+}
+
+function applySubagentPanelHistoryHydrationPatch(currentSource) {
+  if (!currentSource.includes("localConversation.subagentsPanel.title")) {
+    return currentSource;
+  }
+
+  const alreadyPatchedRegex =
+    /\([A-Za-z_$][\w$]*\.get\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\)\?\.length\?\?0\)===0&&await [A-Za-z_$][\w$]*\(`load-older-conversation-history-page`,\{conversationId:[A-Za-z_$][\w$]*,dependentConversationIds:\[\],hostId:[A-Za-z_$][\w$]*\}\)\.catch\(\(\)=>\{\}\)/u;
+  if (alreadyPatchedRegex.test(currentSource)) {
+    return currentSource;
+  }
+
+  const turnsAtomMatch = currentSource.match(
+    /&&([A-Za-z_$][\w$]*)\.get\([A-Za-z_$][\w$]*,([A-Za-z_$][\w$]*)\)===!0&&\1\.get\(([A-Za-z_$][\w$]*),\2\)\?\.some\(/u,
+  );
+  const hydrationNeedle =
+    /if\(!([A-Za-z_$][\w$]*)&&!([A-Za-z_$][\w$]*)\.get\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)&&!([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)\.push\(([A-Za-z_$][\w$]*)\(`hydrate-background-threads`,\{hostId:([A-Za-z_$][\w$]*),includeTurns:!0,threadIds:\[\4\]\}\)\),await Promise\.all\(\6\),([A-Za-z_$][\w$]*)\)\{/u;
+  const hydrationMatch = currentSource.match(hydrationNeedle);
+
+  if (turnsAtomMatch == null || hydrationMatch == null) {
+    console.warn(
+      "WARN: Could not find subagent panel history hydration needle — skipping empty-history fallback patch",
+    );
+    return currentSource;
+  }
+
+  const turnsAtom = turnsAtomMatch[3];
+  return currentSource.replace(
+    hydrationNeedle,
+    (
+      _match,
+      needsHydration,
+      store,
+      loadedAtom,
+      selectedConversationId,
+      hasLiveItems,
+      hydrationRequests,
+      request,
+      hostId,
+      isLoading,
+    ) =>
+      `if(!${needsHydration}&&!${store}.get(${loadedAtom},${selectedConversationId})&&!${hasLiveItems}&&${hydrationRequests}.push(${request}(\`hydrate-background-threads\`,{hostId:${hostId},includeTurns:!0,threadIds:[${selectedConversationId}]})),await Promise.all(${hydrationRequests}),(${store}.get(${turnsAtom},${selectedConversationId})?.length??0)===0&&await ${request}(\`load-older-conversation-history-page\`,{conversationId:${selectedConversationId},dependentConversationIds:[],hostId:${hostId}}).catch(()=>{}),${isLoading}){`,
+  );
+}
+
+function applyPluginMentionFollowUpQueuePatch(currentSource) {
+  if (
+    !currentSource.includes("getMentionedPluginIdsKey") ||
+    !currentSource.includes("followUpQueueMode")
+  ) {
+    return currentSource;
+  }
+
+  const alreadyPatchedRegex =
+    /&&\([A-Za-z_$][\w$]*===`queue`\|\|[A-Za-z_$][\w$]*\.hasPluginBackedMentions\(\)\),/u;
+  if (alreadyPatchedRegex.test(currentSource)) {
+    return currentSource;
+  }
+
+  const queueNeedle =
+    /(async function [A-Za-z_$][\w$]*\(\{[^)]*composerController:([A-Za-z_$][\w$]*)[^)]*canQueueFollowUp:[A-Za-z_$][\w$]*[^)]*\}\)\{[\s\S]*?let )([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)\?\.type===`local`&&([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)===`queue`,/u;
+  if (!queueNeedle.test(currentSource)) {
+    console.warn(
+      "WARN: Could not find active-turn follow-up queue needle — skipping plugin mention context patch",
+    );
+    return currentSource;
+  }
+
+  return currentSource.replace(
+    queueNeedle,
+    (
+      _match,
+      prefix,
+      composerController,
+      shouldQueue,
+      canQueue,
+      followUp,
+      isResponseInProgress,
+      followUpAction,
+    ) =>
+      `${prefix}${shouldQueue}=${canQueue}&&${followUp}?.type===\`local\`&&${isResponseInProgress}&&(${followUpAction}===\`queue\`||${composerController}.hasPluginBackedMentions()),`,
+  );
 }
 
 function applyLocalEnvironmentActionModalDraftPatch(currentSource) {
@@ -2501,6 +2601,8 @@ module.exports = {
   applyLinuxFastModeModelGuardPatch,
   applyLinuxSkillsListDedupePatch,
   applyLocalEnvironmentActionModalDraftPatch,
+  applyPluginMentionFollowUpQueuePatch,
+  applySubagentPanelHistoryHydrationPatch,
   applySubagentNicknameMetadataPatch,
   codexLinuxWatchBrowserWebviewAttachment,
   patchBrowserPagePreloadBundle,

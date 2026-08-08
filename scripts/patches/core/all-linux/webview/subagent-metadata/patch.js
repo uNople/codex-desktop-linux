@@ -5,6 +5,7 @@ const {
 } = require("../../../../descriptor.js");
 const {
   applySubagentNicknameMetadataPatch,
+  applySubagentPanelHistoryHydrationPatch,
 } = require("../../../../impl/webview/index.js");
 
 module.exports = [
@@ -17,5 +18,15 @@ module.exports = [
     missingDescription: "subagent metadata webview bundle",
     skipDescription: "subagent nickname metadata shape patch",
     apply: applySubagentNicknameMetadataPatch,
+  }),
+  webviewAssetPatch({
+    id: "subagent-panel-history-hydration",
+    phase: "webview-asset",
+    order: 1051,
+    ciPolicy: "required-upstream",
+    pattern: /^local-conversation-page-[^.]+\.js$/,
+    missingDescription: "local conversation page webview bundle",
+    skipDescription: "subagent panel empty-history fallback patch",
+    apply: applySubagentPanelHistoryHydrationPatch,
   }),
 ];
